@@ -147,31 +147,27 @@ def fetch_news_finnhub(symbol: str) -> list[str]:
         return []
 
 
-def get_next_batch_tickers(n: int) -> list[dict]:
-    """センチメント分析が未実行または次回取得時刻を過ぎた銘柄を取得する。
-
-    Args:
-        n: 取得する銘柄数。
-
-    Returns:
-        list[dict]: 各要素が {"id": int, "symbol": str, "name": str} のリスト。
-                    取得未実行の銘柄が優先される。
-
-    前提条件:
-        - sentiment_download_log テーブルが存在すること。
-    """
+def get_next_batch_tickers(n: int, market: str = None) -> list[dict]:
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    query = """
         SELECT t.id, t.symbol, t.name
         FROM tickers t
         LEFT JOIN sentiment_download_log l ON t.id = l.ticker_id
         WHERE t.is_active = 1
-          AND (l.last_downloaded_at IS NULL
-               OR datetime(l.next_download_at) <= datetime('now'))
+    """
+    params = []
+    if market:
+        query += " AND t.market = ?"
+        params.append(market)
+    query += """
+        AND (l.last_downloaded_at IS NULL
+             OR datetime(l.next_download_at) <= datetime('now'))
         ORDER BY l.last_downloaded_at ASC NULLS FIRST
         LIMIT ?
-    """, (n,))
+    """
+    params.append(n)
+    cursor.execute(query, params)
     rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return rows
@@ -235,7 +231,7 @@ def save_sentiment_score(ticker_id: int, articles: list[str], scores: list[dict]
     conn.close()
 
 
-def download_next_batch(n: int = None):
+def download_next_batch(n: int = None, market: str = None):
     """未処理銘柄のセンチメントデータをバッチダウンロード・分析・保存する。
 
     NewsAPI（優先）→ Finnhub（フォールバック）の順でニュースを取得し、
@@ -243,6 +239,7 @@ def download_next_batch(n: int = None):
 
     Args:
         n: バッチサイズ（デフォルトは SENTIMENT_BATCH_SIZE）。
+        market: 市場フィルタ（"us" / "japan" / None=全市場）。
 
     Returns:
         None
@@ -253,7 +250,7 @@ def download_next_batch(n: int = None):
     if n is None:
         n = SENTIMENT_BATCH_SIZE
 
-    batch = get_next_batch_tickers(n)
+    batch = get_next_batch_tickers(n, market=market)
     if not batch:
         print("No tickers pending sentiment download.")
         return

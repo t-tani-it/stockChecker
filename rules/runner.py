@@ -7,8 +7,11 @@ rules パッケージ内の BaseRule サブクラスを動的に発見し、
 import importlib
 import inspect
 import pkgutil
+import time
 from typing import List, Type, Dict
 from collections.abc import Callable
+
+import pandas as pd
 
 from rules.base import BaseRule
 from db.schema import get_connection, log_error
@@ -75,21 +78,35 @@ def run_backtest(base_date: str) -> Dict[str, List[dict]]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT DISTINCT t.id, t.symbol, t.name
-        FROM tickers t
-        INNER JOIN prices p ON p.ticker_id = t.id
-        WHERE t.is_active = 1
+        SELECT id, symbol, name
+        FROM tickers
+        WHERE is_active = 1
+          AND EXISTS (SELECT 1 FROM prices WHERE ticker_id = id)
     """)
     all_tickers = [dict(r) for r in cursor.fetchall()]
-    if not all_tickers:
-        cursor.execute("SELECT id, symbol, name FROM tickers WHERE is_active = 1")
-        all_tickers = [dict(r) for r in cursor.fetchall()]
     conn.close()
+
+    ticker_ids = [t["id"] for t in all_tickers]
+    print(f"Loading prices for {len(ticker_ids)} tickers...")
+    conn = get_connection()
+    df_all = pd.read_sql_query(
+        "SELECT ticker_id, date, open, high, low, close, volume FROM prices ORDER BY ticker_id, date ASC",
+        conn,
+    )
+    conn.close()
+    all_prices = {}
+    for tid, grp in df_all.groupby("ticker_id"):
+        all_prices[tid] = grp.drop(columns="ticker_id").reset_index(drop=True)
+    print(f"Loaded {len(all_prices)} tickers' prices")
+
+    for rule in rule_instances:
+        rule.set_all_prices(all_prices)
 
     results = {}
 
     for rule in rule_instances:
         rule_name = rule.name
+        t0 = time.time()
         print(f"Running rule: {rule_name}")
         ticker_scores = []
 
@@ -106,6 +123,7 @@ def run_backtest(base_date: str) -> Dict[str, List[dict]]:
 
         ticker_scores.sort(key=lambda x: x["score"], reverse=True)
         results[rule_name] = ticker_scores
+        print(f"  -> {len(ticker_scores)} scores in {time.time()-t0:.1f}s")
 
         save_results(base_date, rule_name, ticker_scores)
 

@@ -18,6 +18,13 @@ class BaseRule(ABC):
     name: str = ""
     description: str = ""
 
+    def __init__(self):
+        self._cache = {}
+        self._all_prices: Optional[dict[int, pd.DataFrame]] = None
+
+    def set_all_prices(self, all_prices: dict[int, pd.DataFrame]):
+        self._all_prices = all_prices
+
     @abstractmethod
     def need_financials(self) -> bool:
         """当該ルールが財務データを必要とするかどうかを返す。
@@ -51,54 +58,37 @@ class BaseRule(ABC):
     # @abstractmethod がない = 共通の実装済みメソッド。サブクラスはそのまま使える（必要ならオーバーライドも可）
     # pandas の read_sql_query は SQL の結果を直接 DataFrame として返す（ループ不要で便利）
     def get_prices(self, ticker_id: int, base_date: str, lookback_days: int = 365) -> Optional[pd.DataFrame]:
-        """指定銘柄の価格データをデータベースから取得する。
+        cache_key = f"prices:{ticker_id}:{base_date}:{lookback_days}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-        基準日から過去 lookback_days 日間の日次価格（日付・始値・高値・安値・終値・出来高）を
-        昇順で返す。
-
-        Args:
-            ticker_id: 銘柄 ID。
-            base_date: 基準日（"YYYY-MM-DD" 形式）。
-            lookback_days: 取得する過去日数（デフォルト 365 日）。
-
-        Returns:
-            Optional[pd.DataFrame]: カラム ['date', 'open', 'high', 'low', 'close', 'volume'] を持つ
-                                    DataFrame。データが存在しない場合は None。
-
-        前提条件:
-            - prices テーブルに該当 ticker_id のデータが存在すること。
-        """
-        conn = get_connection()
         end = datetime.strptime(base_date, "%Y-%m-%d")
         start = end - timedelta(days=lookback_days)
 
-        query = """
-            SELECT date, open, high, low, close, volume
-            FROM prices
-            WHERE ticker_id = ? AND date >= ? AND date <= ?
-            ORDER BY date ASC
-        """
-        df = pd.read_sql_query(query, conn, params=(ticker_id, start.strftime("%Y-%m-%d"), base_date))
-        conn.close()
+        if self._all_prices is not None and ticker_id in self._all_prices:
+            df = self._all_prices[ticker_id]
+            mask = (df["date"] >= start.strftime("%Y-%m-%d")) & (df["date"] <= base_date)
+            result = df[mask].copy() if mask.any() else None
+        else:
+            conn = get_connection()
+            query = """
+                SELECT date, open, high, low, close, volume
+                FROM prices
+                WHERE ticker_id = ? AND date >= ? AND date <= ?
+                ORDER BY date ASC
+            """
+            df = pd.read_sql_query(query, conn, params=(ticker_id, start.strftime("%Y-%m-%d"), base_date))
+            conn.close()
+            result = df if not df.empty else None
 
-        if df.empty:
-            return None
-        return df
+        self._cache[cache_key] = result
+        return result
 
     def get_financial(self, ticker_id: int, fiscal_year: int) -> Optional[dict]:
-        """指定銘柄・指定年度の財務データを取得する。
+        cache_key = f"fin:{ticker_id}:{fiscal_year}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-        Args:
-            ticker_id: 銘柄 ID。
-            fiscal_year: 取得対象の会計年度（例: 2023）。
-
-        Returns:
-            Optional[dict]: financials テーブルの全カラムを含む辞書。
-                            データが存在しない場合は None。
-
-        前提条件:
-            - financials テーブルに該当データが存在すること。
-        """
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -107,9 +97,15 @@ class BaseRule(ABC):
         )
         row = cursor.fetchone()
         conn.close()
-        return dict(row) if row else None
+        result = dict(row) if row else None
+        self._cache[cache_key] = result
+        return result
 
     def get_latest_financial(self, ticker_id: int, base_date: str) -> Optional[dict]:
+        cache_key = f"latest_fin:{ticker_id}:{base_date}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
@@ -129,22 +125,15 @@ class BaseRule(ABC):
         """, (ticker_id, base_date, base_date))
         row = cursor.fetchone()
         conn.close()
-        return dict(row) if row else None
+        result = dict(row) if row else None
+        self._cache[cache_key] = result
+        return result
 
     def get_indicator(self, ticker_id: int, date: str, rule_name: str) -> Optional[float]:
-        """事前計算済みのルール別指標値をデータベースから取得する。
+        cache_key = f"ind:{ticker_id}:{date}:{rule_name}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-        Args:
-            ticker_id: 銘柄 ID。
-            date: 取得基準日（"YYYY-MM-DD" 形式）。
-            rule_name: ルール名称。
-
-        Returns:
-            Optional[float]: 指標スコア。データが存在しない場合は None。
-
-        注意:
-            - indicators テーブルから指定日以前の最新スコアを取得する。
-        """
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -153,7 +142,9 @@ class BaseRule(ABC):
         )
         row = cursor.fetchone()
         conn.close()
-        return row["score"] if row else None
+        result = row["score"] if row else None
+        self._cache[cache_key] = result
+        return result
 
 
 def normalize_score(raw_score: float, min_val: float, max_val: float) -> float:

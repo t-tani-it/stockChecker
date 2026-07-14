@@ -76,15 +76,17 @@ def fetch_sp500_from_wikipedia() -> List[Tuple[str, str]]:
 
     Returns:
         List[Tuple[str, str]]: （symbol, name）のタプルリスト。
-                               スクレイピング失敗時は空リスト。
+                                スクレイピング失敗時は空リスト。
 
     注意:
         - Wikipedia のテーブル構造が変更された場合、解析に失敗する可能性がある。
     """
-    # pd.read_html(url) は HTML 内の <table> を自動検出し DataFrame のリストとして返す
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        tables = pd.read_html(url)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        tables = pd.read_html(io.StringIO(resp.text))
         df = tables[0]
         tickers = []
         for _, row in df.iterrows():

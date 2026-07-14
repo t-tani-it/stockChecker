@@ -91,7 +91,7 @@ def extract_fiscal_year_data(raw: dict) -> list:
 
     ed_dates = None
     if earnings_dates is not None and not earnings_dates.empty:
-        ed_dates = pd.DatetimeIndex(earnings_dates.index)
+        ed_dates = pd.DatetimeIndex(earnings_dates.index).tz_localize(None)
 
     if financials is None or financials.empty:
         current_year = datetime.now().year
