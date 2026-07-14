@@ -210,4 +210,4 @@ stockChecker/
 
 ## ライセンス
 
-未定
+MIT
