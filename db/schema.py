@@ -65,6 +65,7 @@ def init_db() -> None:
             market        TEXT NOT NULL,
             sector        TEXT,
             market_cap    REAL,
+            shares_outstanding REAL,
             is_active     INTEGER DEFAULT 1,
             created_at    TEXT DEFAULT (datetime('now')),
             updated_at    TEXT DEFAULT (datetime('now'))
@@ -101,6 +102,7 @@ def init_db() -> None:
             roe               REAL,
             dividend_yield    REAL,
             source            TEXT DEFAULT 'yfinance',
+            report_date       TEXT,
             PRIMARY KEY (ticker_id, fiscal_year),
             FOREIGN KEY (ticker_id) REFERENCES tickers(id)
         );
@@ -146,6 +148,16 @@ def init_db() -> None:
             FOREIGN KEY (ticker_id) REFERENCES tickers(id)
         );
     """)
+
+    # 既存DBのマイグレーション: カラム追加（ALTER TABLE は IF NOT EXISTS 非対応のため個別実行）
+    try:
+        cursor.execute("ALTER TABLE tickers ADD COLUMN shares_outstanding REAL")
+    except Exception:
+        pass  # すでに存在する場合はスキップ
+    try:
+        cursor.execute("ALTER TABLE financials ADD COLUMN report_date TEXT")
+    except Exception:
+        pass
 
     conn.commit()
     conn.close()

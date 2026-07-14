@@ -110,28 +110,23 @@ class BaseRule(ABC):
         return dict(row) if row else None
 
     def get_latest_financial(self, ticker_id: int, base_date: str) -> Optional[dict]:
-        """指定銘柄の最新財務データを基準日以前から取得する。
-
-        Args:
-            ticker_id: 銘柄 ID。
-            base_date: 基準日（"YYYY-MM-DD" 形式）。
-
-        Returns:
-            Optional[dict]: 最新の financials レコードの辞書。
-                            データが存在しない場合は None。
-
-        注意:
-            - 基準日の年以前の最新年度データを返す（決算発表ラグを考慮）。
-        """
-        base_year = int(base_date[:4])
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT * FROM financials
-            WHERE ticker_id = ? AND fiscal_year <= ?
-            ORDER BY fiscal_year DESC
+            WHERE ticker_id = ?
+              AND (
+                (report_date IS NOT NULL AND report_date <= ?)
+                OR
+                (report_date IS NULL AND fiscal_year <= CAST(strftime('%Y', ?) AS INTEGER))
+              )
+            ORDER BY
+              CASE
+                WHEN report_date IS NOT NULL THEN report_date
+                ELSE printf('%d-06-30', fiscal_year)
+              END DESC
             LIMIT 1
-        """, (ticker_id, base_year))
+        """, (ticker_id, base_date, base_date))
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None

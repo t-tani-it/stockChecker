@@ -1,6 +1,9 @@
 # 環境変数（APIキー等）
 .env
 
+# SQLite データベース
+*.db
+
 # Python キャッシュ
 __pycache__/
 *.pyc

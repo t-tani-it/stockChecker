@@ -48,11 +48,14 @@ def fetch_yfinance_financials(symbol: str) -> Optional[dict]:
             financials = ticker.financials
             balance_sheet = ticker.balance_sheet
             cashflow = ticker.cashflow
+            earnings_dates = ticker.earnings_dates
 
             result["financials_df"] = financials
             result["balance_sheet_df"] = balance_sheet
             result["cashflow_df"] = cashflow
+            result["earnings_dates_df"] = earnings_dates
             result["info"] = info
+            result["shares_outstanding"] = info.get("sharesOutstanding")
             return result
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -84,6 +87,11 @@ def extract_fiscal_year_data(raw: dict) -> list:
     balance_sheet = raw.get("balance_sheet_df")
     cashflow = raw.get("cashflow_df")
     info = raw.get("info", {})
+    earnings_dates = raw.get("earnings_dates_df")
+
+    ed_dates = None
+    if earnings_dates is not None and not earnings_dates.empty:
+        ed_dates = pd.DatetimeIndex(earnings_dates.index)
 
     if financials is None or financials.empty:
         current_year = datetime.now().year
@@ -99,6 +107,7 @@ def extract_fiscal_year_data(raw: dict) -> list:
             "pbr": raw.get("pbr"),
             "roe": raw.get("roe"),
             "dividend_yield": raw.get("dividend_yield"),
+            "report_date": None,
         })
         return records
 
@@ -107,6 +116,14 @@ def extract_fiscal_year_data(raw: dict) -> list:
             year = col.year if hasattr(col, "year") else int(col)
         except (ValueError, TypeError):
             continue
+
+        report_date = None
+        if ed_dates is not None:
+            fy_end = pd.Timestamp(col)
+            next_fy_end = fy_end + pd.DateOffset(years=1)
+            q4_dates = ed_dates[(ed_dates >= fy_end) & (ed_dates < next_fy_end)]
+            if not q4_dates.empty:
+                report_date = q4_dates[0].strftime("%Y-%m-%d")
 
         rev = financials.loc["Total Revenue"] if "Total Revenue" in financials.index else None
         op_inc = financials.loc["Operating Income"] if "Operating Income" in financials.index else None
@@ -141,6 +158,7 @@ def extract_fiscal_year_data(raw: dict) -> list:
             "pbr": raw.get("pbr") if records else None,
             "roe": raw.get("roe") if records else None,
             "dividend_yield": raw.get("dividend_yield") if records else None,
+            "report_date": report_date,
         })
 
     return records
@@ -232,6 +250,15 @@ def download_all() -> None:
             raw = fetch_yfinance_financials(symbol)
             if raw is not None:
                 records = extract_fiscal_year_data(raw)
+                shares = raw.get("shares_outstanding")
+                if shares is not None and shares > 0:
+                    conn2 = get_connection()
+                    conn2.execute(
+                        "UPDATE tickers SET shares_outstanding = ?, updated_at = datetime('now') WHERE id = ?",
+                        (shares, ticker_id),
+                    )
+                    conn2.commit()
+                    conn2.close()
 
         if records:
             save_financials(ticker_id, records)
@@ -271,13 +298,14 @@ def save_financials(ticker_id: int, records: list) -> None:
         cursor.execute("""
             INSERT OR IGNORE INTO financials
                 (ticker_id, fiscal_year, revenue, operating_income, net_income,
-                 total_assets, total_equity, cash_flow, per, pbr, roe, dividend_yield)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 total_assets, total_equity, cash_flow, per, pbr, roe, dividend_yield, report_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             ticker_id, rec["fiscal_year"],
             rec["revenue"], rec["operating_income"], rec["net_income"],
             rec["total_assets"], rec["total_equity"], rec["cash_flow"],
             rec["per"], rec["pbr"], rec["roe"], rec["dividend_yield"],
+            rec.get("report_date"),
         ))
 
     conn.commit()
