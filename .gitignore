@@ -1,0 +1,12 @@
+# 環境変数（APIキー等）
+.env
+
+# Python キャッシュ
+__pycache__/
+*.pyc
+
+# テストキャッシュ
+.pytest_cache/
+
+# エディタ設定
+.vscode/
