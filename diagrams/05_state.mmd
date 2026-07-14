@@ -1,0 +1,58 @@
+stateDiagram-v2
+    [*] --> PENDING
+
+    state PENDING {
+        [*] --> 待機中
+    }
+
+    PENDING --> DOWNLOADING: download_all() /<br>download_next_batch() /<br>update_incremental() 呼び出し
+
+    state DOWNLOADING {
+        [*] --> HTTP要求送信
+        HTTP要求送信 --> 応答待機
+    }
+
+    DOWNLOADING --> VALIDATING: HTTP 200 OK<br>データ受信完了
+
+    state VALIDATING {
+        [*] --> 列数チェック
+        列数チェック --> 型チェック
+        型チェック --> 範囲チェック
+    }
+
+    VALIDATING --> SAVING: 全チェック通過
+
+    state SAVING {
+        [*] --> DB接続
+        DB接続 --> トランザクション開始
+        トランザクション開始 --> INSERT OR REPLACE
+        INSERT OR REPLACE --> COMMIT
+    }
+
+    SAVING --> COMPLETED: COMMIT成功
+
+    note right of COMPLETED
+        sentiment: 24h クールダウン
+        prices: 最終日以降のみ
+        financials: 新年度のみ追記
+    end note
+
+    COMPLETED --> PENDING: クールダウン期間経過 /<br>次回バッチスケジュール
+
+    DOWNLOADING --> FAILED: APIエラー /<br>ネットワーク障害 /<br>レート制限 /<br>タイムアウト
+
+    VALIDATING --> FAILED: データ欠損 /<br>空DataFrame /<br>フォーマット異常
+
+    SAVING --> FAILED: DB制約違反 /<br>一意制約 /<br>ディスク容量不足
+
+    FAILED --> RETRY_WAITING: log_error() 記録
+
+    state RETRY_WAITING {
+        [*] --> RETRY_WAIT_SECONDS(60s) 待機
+    }
+
+    RETRY_WAITING --> DOWNLOADING: リトライ回数 &lt; MAX_RETRIES(3)<br>→ 再試行
+
+    RETRY_WAITING --> PENDING: リトライ回数 &gt;= MAX_RETRIES(3)<br>→ 最大試行到達<br>次回スケジュール待ち
+
+    FAILED --> PENDING: 手動リセット

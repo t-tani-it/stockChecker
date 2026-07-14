@@ -1,0 +1,38 @@
+# 3b. クラス図 — モジュール構造 (stockChecker)
+
+```mermaid
+classDiagram
+    class Runner {
+        +discover_rules()
+        +run_backtest()
+        +compute_total_ranking()
+        +save_results()
+        +get_rule_names()
+    }
+
+    class DBSchema {
+        +get_connection()
+        +init_db()
+        +log_error()
+    }
+
+    class Ranking {
+        +build_ranking_data()
+        +build_total_ranking_simple()
+    }
+
+    class Charts {
+        +create_price_chart()
+        +fetch_prices_for_chart()
+    }
+
+    class Tabs {
+        +render_tab()
+        +render_total_tab()
+    }
+
+    Runner ..> DBSchema : 結果保存・取得
+    BaseRule ..> DBSchema : データ取得
+    Tabs ..> Charts : チャート描画
+    Tabs ..> Ranking : ランキング表示
+```

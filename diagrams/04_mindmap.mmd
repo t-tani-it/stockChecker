@@ -1,0 +1,128 @@
+mindmap
+  root((stockChecker))
+    UI_Layer
+      app.py
+        メインエントリポイント
+        Streamlit ページ設定
+        日付選択ウィジェット
+        Run Backtest ボタン
+      ui/tabs.py
+        render_tab: ルール別タブ
+        render_total_tab: 総合タブ
+        render_chart_controls
+      ui/charts.py
+        create_price_chart: Plotly生成
+        20日移動平均線
+        出来高バー
+      ui/ranking.py
+        build_ranking_data
+        build_total_ranking_simple
+    Rule_Layer
+      Plugin_Engine
+        rules/runner.py
+          discover_rules: 動的検出
+          run_backtest: 実行
+          compute_total_ranking
+          save_results
+        rules/base.py
+          BaseRule 抽象基底
+      MomentumRule
+        3ヶ月_6ヶ月_12ヶ月リターン
+        加重平均 0.3_0.3_0.4
+      ValueRule
+        PER_逆数
+        PBR_逆数
+        配当利回り
+      QualityRule
+        ROE
+        自己資本比率
+        営業利益率
+      SizeRule
+        時価総額閾値判定
+        小型株バイアス
+      LowVolRule
+        対数収益率の標準偏差
+        年率換算 x sqrt252
+      PeadRule
+        yfinance決算サプライズ
+        期待外れドリフト
+      SentimentRule
+        NewsAPI + Finnhub
+        FinBERT 感情分析
+      TextScoreRule
+        テキスト分析スコア
+        ROEヒューリスティック代替
+      AnomalyRule
+        出来高急増
+        ボラティリティ急変
+    Data_Layer
+      DB_Schema SQLite
+        tickers
+        prices
+        financials
+        indicators
+        backtest_results
+        sentiment_download_log
+        error_log
+      db/tickers.py
+        download_jpx_list: Prime_Standard_Growth
+        fetch_sp500_from_wikipedia
+        CURATED_US_TICKERS: 50銘柄
+      db/downloader_prices.py
+        download_single_price: yfinance
+        download_all: 全ティッカー
+        update_incremental: 差分更新
+      db/downloader_financials.py
+        fetch_yfinance_financials: US
+        fetch_edinet_financials: 日本
+        download_all
+        update_accumulate
+      db/downloader_sentiment.py
+        fetch_news_newsapi
+        fetch_news_finnhub
+        analyze_sentiment: FinBERT
+        download_next_batch: バッチ処理
+    Configuration
+      config.py
+        python-dotenv 環境変数
+        DB_PATH: backtest.db
+        API_Keys
+          NEWSAPI_KEY
+          FINNHUB_API_KEY
+          EDINET_API_KEY
+        Parameters
+          PRICE_LOOKBACK_YEARS: 10
+          FINANCIAL_LOOKBACK_YEARS: 4
+          SENTIMENT_BATCH_SIZE: 50
+          SENTIMENT_MIN_INTERVAL_HOURS: 24
+          MAX_RETRIES: 3
+          RETRY_WAIT_SECONDS: 60
+    External_APIs
+      Yahoo_Finance yfinance
+        株価履歴データ
+        財務諸表
+        決算サプライズ
+        時価総額
+      NewsAPI
+        ニュース記事検索API
+      Finnhub
+        企業ニュース
+        代替データ
+      JPX_東京証券取引所
+        Prime市場CSV
+        Standard市場CSV
+        Growth市場CSV
+      Wikipedia
+        S&P500構成銘柄一覧
+      EDINET
+        日本企業EDINET開示
+      SEC_EDGAR
+        US企業財務書類
+      HuggingFace
+        ProsusAI/finbert モデル
+    Seed_Script
+      seed.py
+        10銘柄デモデータ
+        AAPL_MSFT_GOOGL_AMZN_NVDA
+        株価10年分ダウンロード
+        財務データダウンロード

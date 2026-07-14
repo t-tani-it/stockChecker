@@ -1,0 +1,18 @@
+起動方法
+
+cd stockChecker
+# 初回セットアップ
+pip install -r requirements.txt
+python -c "from db.schema import init_db; init_db()"
+python -c "from db.tickers import update_ticker_list; update_ticker_list()"
+
+# Streamlit起動
+streamlit run app.py
+
+
+
+
+起動方法（更新版）：
+cd stockChecker
+conda activate backtest
+streamlit run app.py

@@ -1,0 +1,53 @@
+# 2. シーケンス図 — バックテスト実行のモジュール間通信 (stockChecker)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant App as app.py
+    participant Runner as rules/runner.py
+    participant Rule as rules/*.py
+    participant DB as db/schema (SQLite)
+
+    User->>App: 日付選択 + Run Backtest クリック
+    App->>App: discover_rules()<br>9ルールを動的検出
+
+    App->>Runner: run_backtest(base_date)
+
+    Runner->>DB: get_all_active_tickers()
+    DB-->>Runner: List[ticker_id, symbol, name]
+
+    rect rgb(232, 245, 255)
+        Note over Runner,Rule: ルールループ (9回)
+        Runner->>Rule: calculate(ticker_id, base_date)
+
+        alt 財務データ型 (Value, Quality, TextScore)
+            Rule->>DB: get_latest_financial(ticker_id, base_date)
+            DB-->>Rule: fiscal_year, PER, PBR, ROE, etc.
+        else 価格データ型 (Momentum, LowVol, Anomaly)
+            Rule->>DB: get_prices(ticker_id, base_date, lookback_days)
+            DB-->>Rule: DataFrame (OHLCV)
+        else 指標参照型 (Sentiment, TextScore)
+            Rule->>DB: get_indicator(ticker_id, date, rule_name)
+            DB-->>Rule: pre_computed_score
+        else 外部API型 (PEAD)
+            Rule->>Rule: yfinance.Ticker(symbol).earnings_dates
+            Note over Rule: 決算サプライズ率取得
+        end
+
+        Rule-->>Runner: score (float, 0-100)
+    end
+
+    Runner->>Runner: スコア降順ソート + ランク付与
+    Runner->>DB: save_results(base_date, rule_name, scores)<br>INSERT OR REPLACE
+    Runner->>Runner: compute_total_ranking()<br>全ルールスコア合算
+    Runner-->>App: Dict[rule_name, List[ticker_id, score]]
+
+    App->>App: st.session_state に保存
+    App->>User: タブ表示 (総合 + 各ルール)
+
+    User->>App: ティッカー展開 + 期間選択
+    App->>DB: fetch_prices_for_chart(ticker_id, base_date, months)
+    DB-->>App: DataFrame (OHLCV)
+    App->>App: create_price_chart() → Plotly Figure
+    App-->>User: Candlestick + 20MA + Volume 描画
+```
