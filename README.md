@@ -57,20 +57,44 @@ streamlit run app.py
 
 ### 全データのダウンロード（任意）
 
-seed.py は10銘柄のみを対象としています。全アクティブ銘柄のデータを取得する場合は以下のスクリプトを実行します。
+seed.py は10銘柄のみを対象としています。**S&P 500 全503銘柄**を対象とする場合は以下のスクリプトを実行します。
 
 ```bash
-# 全データを一括ダウンロード（株価・財務・センチメント）
-python download_all.py
+# 全データを一括ダウンロード（株価・財務）
+python download_full.py
 
-# 株価のみ差分更新（軽量、前回取得日から5日分のみ再取得）
-python download_all.py --incremental
+# センチメントのみ追加実行（50銘柄ずつ、複数回に分けて実行）
+python download_full.py --sentiment
 
-# 特定のデータのみ
-python download_all.py --prices      # 株価のみ
-python download_all.py --financials  # 財務のみ
-python download_all.py --sentiment   # センチメントのみ
+# PEAD（決算サプライズ）のみ事前計算
+python download_full.py --pead
 ```
+
+#### センチメントのダウンロード
+
+センチメント分析（ニュース感情分析）は [NewsAPI](https://newsapi.org/register) の無料枠（1日100リクエスト）の制限があるため、全503銘柄を複数回に分けて取得する必要があります。1回の実行で最大50銘柄を処理し、前回のダウンロードから24時間経過していない銘柄は自動スキップされます。
+
+```bash
+# 1回目: 50銘柄を処理（本日）
+python download_full.py --sentiment
+
+# 翌日以降、同じコマンドを繰り返し実行
+python download_full.py --sentiment   # 2回目
+python download_full.py --sentiment   # 3回目
+# ... 全503銘柄完了するまで繰り返し
+```
+
+進捗は `sentiment_download_log` テーブルで管理され、中断しても次回は続きから自動再開します。
+
+#### PEAD（決算サプライズ）の事前計算
+
+PEADルール（決算発表後ドリフト）は yfinance API から各銘柄の決算サプライズ率を取得します。初回は503銘柄分のAPI呼び出しが発生するため、以下のコマンドで事前計算しておくことを推奨します。
+
+```bash
+python download_full.py --pead
+```
+
+1回の実行で `indicators` テーブルに保存され、以降のバックテストでは DB から読み込むため高速に動作します（バックテスト全体が約33秒で完了）。再計算したい場合は再度同じコマンドを実行してください。
 
 ## システム構成
 
@@ -78,8 +102,9 @@ python download_all.py --sentiment   # センチメントのみ
 stockChecker/
 ├── app.py                     # Streamlit メインエントリポイント
 ├── config.py                  # 設定（環境変数読み込み）
-├── seed.py                    # 初期データ投入スクリプト
-├── download_all.py            # 全データ一括ダウンロードスクリプト
+├── seed.py                    # 初期データ投入スクリプト（10銘柄）
+├── download_all.py            # 全データ一括ダウンロードスクリプト（旧・10銘柄デモ用）
+├── download_full.py            # S&P 500 全銘柄一括ダウンロードスクリプト（503銘柄）
 ├── requirements.txt           # 依存パッケージ一覧
 ├── backtest.db                # SQLite データベース
 │
