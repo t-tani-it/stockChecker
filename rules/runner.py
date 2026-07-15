@@ -61,7 +61,7 @@ def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]
 
     Args:
         base_date: 基準日（"YYYY-MM-DD" 形式）。
-        progress_callback: 進捗通知用コールバック (message: str, progress: float) -> None。
+        progress_callback: 進捗通知用コールバック (message: str, elapsed_sec: float, progress: float) -> None。
 
     Returns:
         Dict[str, List[dict]]: ルール名をキー、スコアリスト（ticker_id / score）を値とする辞書。
@@ -73,8 +73,11 @@ def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]
         - DB に tickers / prices テーブルのデータが存在すること。
         - discover_rules() で少なくとも 1 つのルールが発見されること。
     """
+    _t0 = time.time()
+    _elapsed = lambda: time.time() - _t0
+
     if progress_callback:
-        progress_callback("ルールクラスを読み込み中...", 0.01)
+        progress_callback("ルールクラスを読み込み中...", _elapsed(), 0.01)
 
     rule_classes = discover_rules()
     rule_instances = [cls() for cls in rule_classes]
@@ -83,7 +86,7 @@ def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]
     cursor = conn.cursor()
 
     if progress_callback:
-        progress_callback("銘柄リストを読み込み中...", 0.02)
+        progress_callback("銘柄リストを読み込み中...", _elapsed(), 0.02)
 
     cursor.execute("""
         SELECT id, symbol, name, shares_outstanding
@@ -97,7 +100,7 @@ def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]
     tickers_map = {t["id"]: t for t in all_tickers}
 
     if progress_callback:
-        progress_callback(f"株価データを読み込み中 ({len(ticker_ids)}銘柄)...", 0.05)
+        progress_callback(f"株価データを読み込み中 ({len(ticker_ids)}銘柄)...", _elapsed(), 0.05)
 
     df_all = pd.read_sql_query(
         "SELECT ticker_id, date, open, high, low, close, volume FROM prices ORDER BY ticker_id, date ASC",
@@ -105,12 +108,12 @@ def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]
     )
 
     if progress_callback:
-        progress_callback("財務データを読み込み中...", 0.15)
+        progress_callback("財務データを読み込み中...", _elapsed(), 0.15)
 
     df_fin = pd.read_sql_query("SELECT * FROM financials", conn)
 
     if progress_callback:
-        progress_callback("指標データを読み込み中...", 0.20)
+        progress_callback("指標データを読み込み中...", _elapsed(), 0.20)
 
     df_ind = pd.read_sql_query("SELECT * FROM indicators", conn)
     conn.close()
@@ -148,7 +151,7 @@ def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]
 
         progress_pct = 0.25 + (i / total_rules) * 0.70
         if progress_callback:
-            progress_callback(f"ルール実行中 ({i+1}/{total_rules}): {rule_name}", progress_pct)
+            progress_callback(f"ルール実行中 ({i+1}/{total_rules}): {rule_name}", _elapsed(), progress_pct)
 
         ticker_scores = []
 
@@ -165,18 +168,18 @@ def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]
         results[rule_name] = ticker_scores
 
         if progress_callback:
-            progress_callback(f"保存中: {rule_name}", progress_pct + 0.02)
+            progress_callback(f"保存中: {rule_name}", _elapsed(), progress_pct + 0.02)
 
         save_results(base_date, rule_name, ticker_scores)
 
     if progress_callback:
-        progress_callback("総合ランキングを計算中...", 0.96)
+        progress_callback("総合ランキングを計算中...", _elapsed(), 0.96)
 
     total_results = compute_total_ranking(results, all_tickers)
     save_results(base_date, "総合ランキング", total_results)
 
     if progress_callback:
-        progress_callback("完了", 1.0)
+        progress_callback("完了", _elapsed(), 1.0)
 
     return results
 

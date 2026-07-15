@@ -5,6 +5,7 @@ Streamlit アプリケーションを起動し、バックテストの実行お�
 全ルールによるスコアリング結果をタブ形式で確認できる。
 """
 
+import time
 import streamlit as st
 from datetime import date
 
@@ -75,8 +76,19 @@ def main():
     # Streamlit の処理モデル: ボタンが押されるとスクリプト全体が上から再実行される
     if run_button:
         base_date_str = base_date.strftime("%Y-%m-%d")
-        with st.spinner("バックテスト実行中..."):
-            results = _run_backtest_cached(base_date_str)
+        _bt0 = time.time()
+        status = st.status("バックテスト開始...", expanded=True)
+
+        def _on_progress(msg: str, sec: float, pct: float):
+            status.update(label=f"{msg}（{sec:.0f}秒）")
+
+        results = run_backtest(base_date_str, progress_callback=_on_progress)
+
+        status.update(
+            label=f"バックテスト完了！（{time.time() - _bt0:.1f}秒）",
+            state="complete",
+            expanded=False,
+        )
         st.session_state["results"] = results
         st.session_state["base_date"] = base_date_str
         st.success(f"バックテスト完了！ 基準日: {base_date_str}")
