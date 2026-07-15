@@ -44,14 +44,16 @@ class PeadRule(BaseRule):
 
         symbol = row["symbol"]
 
+        ex = ThreadPoolExecutor(max_workers=1)
         try:
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(self._fetch_earnings, symbol)
-                earnings = future.result(timeout=10)
+            future = ex.submit(self._fetch_earnings, symbol)
+            earnings = future.result(timeout=10)
         except FutureTimeout:
             return 40.0
         except Exception:
             return 40.0
+        finally:
+            ex.shutdown(wait=False)
 
         if earnings is None or earnings.empty:
             return 40.0
