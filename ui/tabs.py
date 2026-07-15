@@ -37,7 +37,7 @@ def render_tab(rule_name: str, scores: list, base_date: str) -> None:
         st.info("該当する銘柄がありません")
         return
 
-    for rank, item in enumerate(scores[:50]):
+    for rank, item in enumerate(scores[:20]):
         ticker_id = item["ticker_id"]
         score = item["score"]
         ticker = ticker_map.get(ticker_id, {})
@@ -129,7 +129,7 @@ def render_chart_controls(ticker_id: int, symbol: str, base_date: str, tab_label
     )
 
     fig = create_price_chart(ticker_id, base_date, months, symbol)
-    st.plotly_chart(fig, key=f"{key_base}_chart")
+    st.image(fig)
 
 
 # 名前が _ で始まる関数は「内部使用（プライベート）」の慣習 — 外部から呼ばれる想定ではない
