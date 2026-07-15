@@ -186,13 +186,15 @@ class BaseRule(ABC):
                 if d <= date and d > best_date:
                     best_date = d
                     best = r.get("score")
+            if best is None and records:
+                best = records[-1].get("score")
             result = best
         else:
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT score FROM indicators WHERE ticker_id = ? AND date <= ? AND rule_name = ? ORDER BY date DESC LIMIT 1",
-                (ticker_id, date, rule_name),
+                "SELECT score FROM indicators WHERE ticker_id = ? AND rule_name = ? ORDER BY date DESC LIMIT 1",
+                (ticker_id, rule_name),
             )
             row = cursor.fetchone()
             conn.close()
