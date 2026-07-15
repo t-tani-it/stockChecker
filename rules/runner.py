@@ -157,12 +157,16 @@ def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]
 
         for ticker in all_tickers:
             ticker_id = ticker["id"]
+            _tt0 = time.time()
             try:
                 score = rule.calculate(ticker_id, base_date)
                 ticker_scores.append({"ticker_id": ticker_id, "score": score})
             except Exception as e:
                 ticker_scores.append({"ticker_id": ticker_id, "score": 0.0})
                 log_error(f"rule_{rule_name}", ticker_id, str(e))
+            _tt = time.time() - _tt0
+            if _tt > 1.0:
+                print(f"[SLOW] {rule_name} ticker_id={ticker_id} {_tt:.1f}s")
 
         ticker_scores.sort(key=lambda x: x["score"], reverse=True)
         results[rule_name] = ticker_scores

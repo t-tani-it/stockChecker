@@ -1,3 +1,4 @@
+import time
 import yfinance as yf
 import pandas as pd
 from rules.base import BaseRule
@@ -28,6 +29,8 @@ class PeadRule(BaseRule):
         if indicator_score is not None:
             return indicator_score
 
+        print(f"[PEAD-DEBUG] NO CACHE: ticker_id={ticker_id}, base_date={base_date}")
+
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT symbol FROM tickers WHERE id = ?", (ticker_id,))
@@ -39,9 +42,13 @@ class PeadRule(BaseRule):
 
         symbol = row["symbol"]
 
+        _t0_pead = time.time()
         try:
             ticker = yf.Ticker(symbol)
             earnings = ticker.earnings_dates
+            _dt = time.time() - _t0_pead
+            if _dt > 2:
+                print(f"[PEAD-DEBUG] SLOW yfinance: symbol={symbol} ticker_id={ticker_id} {_dt:.1f}s")
 
             if earnings is None or earnings.empty:
                 return 40.0

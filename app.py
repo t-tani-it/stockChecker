@@ -80,7 +80,7 @@ def main():
         status = st.status("バックテスト開始...", expanded=True)
 
         def _on_progress(msg: str, sec: float, pct: float):
-            status.update(label=f"{msg}（{sec:.0f}秒）")
+            status.update(label=f"{msg}（{time.strftime('%H:%M:%S')}）")
 
         results = run_backtest(base_date_str, progress_callback=_on_progress)
 
