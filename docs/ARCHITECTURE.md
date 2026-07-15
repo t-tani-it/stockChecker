@@ -74,7 +74,7 @@ mindmap
         総合ランキングタブ
         チャート操作
       ui/charts.py
-        Plotly Candlestick
+        Pillow PNG Candlestick
         20MA
         出来高
       ui/ranking.py
