@@ -52,7 +52,7 @@ def discover_rules() -> List[Type[BaseRule]]:
     return rules
 
 
-def run_backtest(base_date: str) -> Dict[str, List[dict]]:
+def run_backtest(base_date: str, progress_callback=None) -> Dict[str, List[dict]]:
     """全ルール・全アクティブ銘柄に対してバックテストを実行する。
 
     discover_rules() で発見した全ルールを順に実行し、
@@ -61,6 +61,7 @@ def run_backtest(base_date: str) -> Dict[str, List[dict]]:
 
     Args:
         base_date: 基準日（"YYYY-MM-DD" 形式）。
+        progress_callback: 進捗通知用コールバック (message: str, progress: float) -> None。
 
     Returns:
         Dict[str, List[dict]]: ルール名をキー、スコアリスト（ticker_id / score）を値とする辞書。
@@ -72,46 +73,85 @@ def run_backtest(base_date: str) -> Dict[str, List[dict]]:
         - DB に tickers / prices テーブルのデータが存在すること。
         - discover_rules() で少なくとも 1 つのルールが発見されること。
     """
+    if progress_callback:
+        progress_callback("ルールクラスを読み込み中...", 0.01)
+
     rule_classes = discover_rules()
     rule_instances = [cls() for cls in rule_classes]
 
     conn = get_connection()
     cursor = conn.cursor()
+
+    if progress_callback:
+        progress_callback("銘柄リストを読み込み中...", 0.02)
+
     cursor.execute("""
-        SELECT id, symbol, name
+        SELECT id, symbol, name, shares_outstanding
         FROM tickers
         WHERE is_active = 1
           AND EXISTS (SELECT 1 FROM prices WHERE ticker_id = id)
     """)
     all_tickers = [dict(r) for r in cursor.fetchall()]
-    conn.close()
 
     ticker_ids = [t["id"] for t in all_tickers]
-    print(f"Loading prices for {len(ticker_ids)} tickers...")
-    conn = get_connection()
+    tickers_map = {t["id"]: t for t in all_tickers}
+
+    if progress_callback:
+        progress_callback(f"株価データを読み込み中 ({len(ticker_ids)}銘柄)...", 0.05)
+
     df_all = pd.read_sql_query(
         "SELECT ticker_id, date, open, high, low, close, volume FROM prices ORDER BY ticker_id, date ASC",
         conn,
     )
+
+    if progress_callback:
+        progress_callback("財務データを読み込み中...", 0.15)
+
+    df_fin = pd.read_sql_query("SELECT * FROM financials", conn)
+
+    if progress_callback:
+        progress_callback("指標データを読み込み中...", 0.20)
+
+    df_ind = pd.read_sql_query("SELECT * FROM indicators", conn)
     conn.close()
+
     all_prices = {}
     for tid, grp in df_all.groupby("ticker_id"):
         all_prices[tid] = grp.drop(columns="ticker_id").reset_index(drop=True)
-    print(f"Loaded {len(all_prices)} tickers' prices")
+
+    all_financials = {}
+    for tid, grp in df_fin.groupby("ticker_id"):
+        all_financials[tid] = grp.to_dict("records")
+
+    all_indicators = {}
+    for tid, grp in df_ind.groupby("ticker_id"):
+        ind_dict = {}
+        for _, row in grp.iterrows():
+            rn = row["rule_name"]
+            if rn not in ind_dict:
+                ind_dict[rn] = []
+            ind_dict[rn].append({"date": row["date"], "score": row["score"]})
+        all_indicators[tid] = ind_dict
 
     for rule in rule_instances:
         rule.set_all_prices(all_prices)
+        rule.set_all_financials(all_financials)
+        rule.set_all_indicators(all_indicators)
+        rule.set_tickers_map(tickers_map)
 
     results = {}
+    total_rules = len(rule_instances)
 
-    for rule in rule_instances:
+    for i, rule in enumerate(rule_instances):
         rule_name = rule.name
         t0 = time.time()
-        print(f"Running rule: {rule_name}")
+
+        progress_pct = 0.25 + (i / total_rules) * 0.70
+        if progress_callback:
+            progress_callback(f"ルール実行中 ({i+1}/{total_rules}): {rule_name}", progress_pct)
+
         ticker_scores = []
 
-        # 個別銘柄の計算で例外が発生しても 0.0 で補完して続行（フォールトトレランス）
-        # エラーは log_error で DB に記録される
         for ticker in all_tickers:
             ticker_id = ticker["id"]
             try:
@@ -123,12 +163,20 @@ def run_backtest(base_date: str) -> Dict[str, List[dict]]:
 
         ticker_scores.sort(key=lambda x: x["score"], reverse=True)
         results[rule_name] = ticker_scores
-        print(f"  -> {len(ticker_scores)} scores in {time.time()-t0:.1f}s")
+
+        if progress_callback:
+            progress_callback(f"保存中: {rule_name}", progress_pct + 0.02)
 
         save_results(base_date, rule_name, ticker_scores)
 
+    if progress_callback:
+        progress_callback("総合ランキングを計算中...", 0.96)
+
     total_results = compute_total_ranking(results, all_tickers)
     save_results(base_date, "総合ランキング", total_results)
+
+    if progress_callback:
+        progress_callback("完了", 1.0)
 
     return results
 

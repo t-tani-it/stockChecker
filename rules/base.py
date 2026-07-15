@@ -21,9 +21,21 @@ class BaseRule(ABC):
     def __init__(self):
         self._cache = {}
         self._all_prices: Optional[dict[int, pd.DataFrame]] = None
+        self._all_financials: Optional[dict[int, list[dict]]] = None
+        self._all_indicators: Optional[dict[int, dict[str, list[dict]]]] = None
+        self._tickers_map: dict[int, dict] = {}
 
     def set_all_prices(self, all_prices: dict[int, pd.DataFrame]):
         self._all_prices = all_prices
+
+    def set_all_financials(self, all_financials: dict[int, list[dict]]):
+        self._all_financials = all_financials
+
+    def set_all_indicators(self, all_indicators: dict[int, dict[str, list[dict]]]):
+        self._all_indicators = all_indicators
+
+    def set_tickers_map(self, tickers_map: dict[int, dict]):
+        self._tickers_map = tickers_map
 
     @abstractmethod
     def need_financials(self) -> bool:
@@ -89,15 +101,23 @@ class BaseRule(ABC):
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM financials WHERE ticker_id = ? AND fiscal_year = ?",
-            (ticker_id, fiscal_year),
-        )
-        row = cursor.fetchone()
-        conn.close()
-        result = dict(row) if row else None
+        result = None
+        if self._all_financials is not None and ticker_id in self._all_financials:
+            for r in self._all_financials[ticker_id]:
+                if r.get("fiscal_year") == fiscal_year:
+                    result = r
+                    break
+        else:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM financials WHERE ticker_id = ? AND fiscal_year = ?",
+                (ticker_id, fiscal_year),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            result = dict(row) if row else None
+
         self._cache[cache_key] = result
         return result
 
@@ -106,26 +126,48 @@ class BaseRule(ABC):
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM financials
-            WHERE ticker_id = ?
-              AND (
-                (report_date IS NOT NULL AND report_date <= ?)
-                OR
-                (report_date IS NULL AND fiscal_year <= CAST(strftime('%Y', ?) AS INTEGER))
-              )
-            ORDER BY
-              CASE
-                WHEN report_date IS NOT NULL THEN report_date
-                ELSE printf('%d-06-30', fiscal_year)
-              END DESC
-            LIMIT 1
-        """, (ticker_id, base_date, base_date))
-        row = cursor.fetchone()
-        conn.close()
-        result = dict(row) if row else None
+        result = None
+        if self._all_financials is not None and ticker_id in self._all_financials:
+            base_year = int(base_date[:4])
+            best = None
+            best_key = ""
+            for r in self._all_financials[ticker_id]:
+                report_date = r.get("report_date")
+                fiscal_year = r.get("fiscal_year")
+                if report_date is not None and report_date <= base_date:
+                    sort_key = report_date
+                elif report_date is None and fiscal_year is not None and fiscal_year <= base_year:
+                    sort_key = f"{fiscal_year}-06-30"
+                    if sort_key > base_date:
+                        continue
+                else:
+                    continue
+                if sort_key > best_key:
+                    best_key = sort_key
+                    best = r
+            result = best
+        else:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM financials
+                WHERE ticker_id = ?
+                  AND (
+                    (report_date IS NOT NULL AND report_date <= ?)
+                    OR
+                    (report_date IS NULL AND fiscal_year <= CAST(strftime('%Y', ?) AS INTEGER))
+                  )
+                ORDER BY
+                  CASE
+                    WHEN report_date IS NOT NULL THEN report_date
+                    ELSE printf('%d-06-30', fiscal_year)
+                  END DESC
+                LIMIT 1
+            """, (ticker_id, base_date, base_date))
+            row = cursor.fetchone()
+            conn.close()
+            result = dict(row) if row else None
+
         self._cache[cache_key] = result
         return result
 
@@ -134,15 +176,28 @@ class BaseRule(ABC):
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT score FROM indicators WHERE ticker_id = ? AND date <= ? AND rule_name = ? ORDER BY date DESC LIMIT 1",
-            (ticker_id, date, rule_name),
-        )
-        row = cursor.fetchone()
-        conn.close()
-        result = row["score"] if row else None
+        result = None
+        if self._all_indicators is not None and ticker_id in self._all_indicators:
+            records = self._all_indicators[ticker_id].get(rule_name, [])
+            best = None
+            best_date = ""
+            for r in records:
+                d = r.get("date", "")
+                if d <= date and d > best_date:
+                    best_date = d
+                    best = r.get("score")
+            result = best
+        else:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT score FROM indicators WHERE ticker_id = ? AND date <= ? AND rule_name = ? ORDER BY date DESC LIMIT 1",
+                (ticker_id, date, rule_name),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            result = row["score"] if row else None
+
         self._cache[cache_key] = result
         return result
 

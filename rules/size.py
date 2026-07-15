@@ -4,7 +4,6 @@
 """
 
 from rules.base import BaseRule
-from db.schema import get_connection
 
 
 class SizeRule(BaseRule):
@@ -48,22 +47,14 @@ class SizeRule(BaseRule):
                     - 超大型（2000億以上）: 25.0
                     時価総額不明の場合は 50.0。
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT shares_outstanding FROM tickers WHERE id = ?", (ticker_id,))
-        row = cursor.fetchone()
-        shares = row["shares_outstanding"] if row else None
+        ticker_info = self._tickers_map.get(ticker_id, {})
+        shares = ticker_info.get("shares_outstanding")
 
         close = None
         if shares is not None and shares > 0:
-            cursor.execute(
-                "SELECT close FROM prices WHERE ticker_id = ? AND date <= ? ORDER BY date DESC LIMIT 1",
-                (ticker_id, base_date),
-            )
-            price_row = cursor.fetchone()
-            if price_row:
-                close = price_row["close"]
-        conn.close()
+            df = self.get_prices(ticker_id, base_date, lookback_days=30)
+            if df is not None and not df.empty:
+                close = df["close"].values[-1]
 
         if shares is None or shares <= 0 or close is None or close <= 0:
             return 50.0

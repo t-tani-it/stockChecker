@@ -69,8 +69,17 @@ def main():
     # Streamlit の処理モデル: ボタンが押されるとスクリプト全体が上から再実行される
     if run_button:
         base_date_str = base_date.strftime("%Y-%m-%d")
-        with st.spinner("バックテスト実行中..."):
-            results = run_backtest(base_date_str)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        def _on_progress(msg: str, pct: float):
+            status_text.text(msg)
+            progress_bar.progress(pct)
+
+        results = run_backtest(base_date_str, progress_callback=_on_progress)
+
+        status_text.text("完了!")
+        progress_bar.progress(1.0)
         st.session_state["results"] = results
         st.session_state["base_date"] = base_date_str
         st.success(f"バックテスト完了！ 基準日: {base_date_str}")
