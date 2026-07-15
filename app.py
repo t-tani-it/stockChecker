@@ -22,6 +22,12 @@ st.set_page_config(
 )
 
 
+@st.cache_data(ttl=3600)
+def _run_backtest_cached(base_date_str: str):
+    """バックテスト結果をキャッシュする（同一基準日では再計算しない）。"""
+    return run_backtest(base_date_str)
+
+
 def main():
     """Streamlit UI を構築し、バックテストの実行・結果表示を制御する。
 
@@ -69,17 +75,8 @@ def main():
     # Streamlit の処理モデル: ボタンが押されるとスクリプト全体が上から再実行される
     if run_button:
         base_date_str = base_date.strftime("%Y-%m-%d")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        def _on_progress(msg: str, pct: float):
-            status_text.text(msg)
-            progress_bar.progress(pct)
-
-        results = run_backtest(base_date_str, progress_callback=_on_progress)
-
-        status_text.text("完了!")
-        progress_bar.progress(1.0)
+        with st.spinner("バックテスト実行中..."):
+            results = _run_backtest_cached(base_date_str)
         st.session_state["results"] = results
         st.session_state["base_date"] = base_date_str
         st.success(f"バックテスト完了！ 基準日: {base_date_str}")
