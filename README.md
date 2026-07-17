@@ -2,6 +2,11 @@
 
 資産運用・株式投資を対象としたデータマイニングで発見された「法則（＝利益に繋がる株価パターンや財務条件）」を、過去データを使って検証（バックテスト）するためのツール。
 
+<img width="1095" height="503" alt="stockChecker1" src="https://github.com/user-attachments/assets/866d1517-d2a4-48bc-b586-637ea5e6bce1" />
+---
+<img width="1059" height="544" alt="stockChecker2" src="https://github.com/user-attachments/assets/e9419520-90d2-4c61-b201-00ee87877afd" />
+---
+
 ## 対象ユーザー
 
 - データマイニングによって発見した投資法則を確認・検証したい個人投資家
