@@ -36,13 +36,13 @@ def fetch_yfinance_financials(symbol: str) -> Optional[dict]:
             ticker = yf.Ticker(symbol)
             info = ticker.info
             result = {
-                "per": info.get("trailingPE"),
-                "pbr": info.get("priceToBook"),
-                "roe": info.get("returnOnEquity"),
-                "dividend_yield": info.get("dividendYield"),
-                "market_cap": info.get("marketCap"),
-                "revenue": info.get("totalRevenue"),
-                "operating_margin": info.get("operatingMargins"),
+                "per": info.get("trailingPE"),              # 実績PER（株価÷1株益）倍率
+                "pbr": info.get("priceToBook"),             # PBR（株価÷1株純資産）倍率
+                "roe": info.get("returnOnEquity"),           # ROE（自己資本利益率）0.15=15%
+                "dividend_yield": info.get("dividendYield"), # 配当利回り 0.03=3%
+                "market_cap": info.get("marketCap"),         # 時価総額 USD/円
+                "revenue": info.get("totalRevenue"),         # 売上高 USD/円
+                "operating_margin": info.get("operatingMargins"), # 営業利益率 0.25=25%
             }
 
             financials = ticker.financials
@@ -64,15 +64,76 @@ def fetch_yfinance_financials(symbol: str) -> Optional[dict]:
                 return None
 
 
-def extract_fiscal_year_data(raw: dict) -> list:
+def _get_close_price_at(prices_df: Optional[pd.DataFrame], fy_end_date) -> Optional[float]:
+    """会計年度末日に最も近い取引日の終値を取得する。
+
+    Args:
+        prices_df: date（datetime64[ns]）をインデックス、close カラムを持つ DataFrame。
+        fy_end_date: 会計年度末日（pd.Timestamp または日付文字列）。
+
+    Returns:
+        Optional[float]: 終値。該当なしの場合は None。
+    """
+    if prices_df is None or prices_df.empty:
+        return None
+    if hasattr(fy_end_date, "date"):
+        target = fy_end_date.date()
+    elif isinstance(fy_end_date, str):
+        target = pd.Timestamp(fy_end_date).date()
+    else:
+        target = fy_end_date
+    target_ts = pd.Timestamp(target)
+    if target_ts in prices_df.index:
+        return float(prices_df.loc[target_ts, "close"])
+    before = prices_df[prices_df.index <= target_ts]
+    after = prices_df[prices_df.index >= target_ts]
+    if not before.empty:
+        return float(before.iloc[-1]["close"])
+    if not after.empty:
+        return float(after.iloc[0]["close"])
+    return None
+
+
+def _load_prices_df(ticker_id: int) -> Optional[pd.DataFrame]:
+    """指定銘柄の株価データを DB の prices テーブルから DataFrame として読み込む。
+
+    Args:
+        ticker_id: 銘柄 ID。
+
+    Returns:
+        Optional[pd.DataFrame]: date をインデックス、close カラムを持つ DataFrame。
+                                データがない場合は None。
+    """
+    conn = get_connection()
+    df = pd.read_sql_query(
+        "SELECT date, close FROM prices WHERE ticker_id = ? ORDER BY date",
+        conn, params=(ticker_id,)
+    )
+    conn.close()
+    if df.empty:
+        return None
+    df["date"] = pd.to_datetime(df["date"])
+    df.set_index("date", inplace=True)
+    return df
+
+
+def extract_fiscal_year_data(raw: dict, prices_df: Optional[pd.DataFrame] = None) -> list:
     """yfinance の財務 DataFrame から会計年度別のデータを抽出する。
 
     financials / balance_sheet / cashflow の各 DataFrame を横断し、
     各会計年度の収益・営業利益・純利益・総資産・自己資本・キャッシュフローを
     辞書リストとして整列する。
 
+    yfinance の ticker.info が返す trailingPE / priceToBook / returnOnEquity /
+    dividendYield はあくまで「現在（APIコール時点）」の値であり、
+    過去の会計年度ごとの値は提供されない。
+    そのため、PER / PBR / ROE / 配当利回りは財務諸表データと株価から
+    システム側で年度別に計算する。
+
     Args:
         raw: fetch_yfinance_financials の戻り値。
+        prices_df: date をインデックス、close カラムを持つ DataFrame。
+                   指定されない場合、PER / PBR は None になる。
 
     Returns:
         list: 各要素が fiscal_year / revenue / operating_income / net_income /
@@ -80,7 +141,7 @@ def extract_fiscal_year_data(raw: dict) -> list:
               dividend_yield を含む辞書のリスト。
 
     注意:
-        - financials が空の場合、PER・PBR・ROE のみの簡易レコード 1 件を返す。
+        - financials が空の場合、簡易レコード 1 件を返す（per/pbr/roe は None）。
     """
     records = []
     financials = raw.get("financials_df")
@@ -97,16 +158,16 @@ def extract_fiscal_year_data(raw: dict) -> list:
         current_year = datetime.now().year
         records.append({
             "fiscal_year": current_year - 1,
-            "revenue": raw.get("revenue"),
+            "revenue": None,
             "operating_income": None,
             "net_income": None,
             "total_assets": None,
             "total_equity": None,
             "cash_flow": None,
-            "per": raw.get("per"),
-            "pbr": raw.get("pbr"),
-            "roe": raw.get("roe"),
-            "dividend_yield": raw.get("dividend_yield"),
+            "per": None,
+            "pbr": None,
+            "roe": None,
+            "dividend_yield": None,
             "report_date": None,
         })
         return records
@@ -125,9 +186,10 @@ def extract_fiscal_year_data(raw: dict) -> list:
             if not q4_dates.empty:
                 report_date = q4_dates[0].strftime("%Y-%m-%d")
 
-        rev = financials.loc["Total Revenue"] if "Total Revenue" in financials.index else None
-        op_inc = financials.loc["Operating Income"] if "Operating Income" in financials.index else None
-        net_inc = financials.loc["Net Income"] if "Net Income" in financials.index else None
+        rev_row = financials.loc["Total Revenue"] if "Total Revenue" in financials.index else None
+        op_inc_row = financials.loc["Operating Income"] if "Operating Income" in financials.index else None
+        net_inc_row = financials.loc["Net Income"] if "Net Income" in financials.index else None
+        eps_row = financials.loc["Basic EPS"] if "Basic EPS" in financials.index else None
 
         total_assets = None
         total_equity = None
@@ -146,18 +208,79 @@ def extract_fiscal_year_data(raw: dict) -> list:
             elif "Free Cash Flow" in cashflow.index:
                 cf = cashflow.loc["Free Cash Flow"].get(col)
 
+        def _to_float(v):
+            if v is None:
+                return None
+            try:
+                f = float(v)
+                return None if pd.isna(f) else f
+            except (ValueError, TypeError):
+                return None
+
+        revenue = _to_float(rev_row.get(col)) if rev_row is not None and col in rev_row else None
+        operating_income = _to_float(op_inc_row.get(col)) if op_inc_row is not None and col in op_inc_row else None
+        net_income = _to_float(net_inc_row.get(col)) if net_inc_row is not None and col in net_inc_row else None
+        basic_eps = _to_float(eps_row.get(col)) if eps_row is not None and col in eps_row else None
+
+        total_assets = _to_float(total_assets) if total_assets is not None else None
+        total_equity = _to_float(total_equity) if total_equity is not None else None
+        cash_flow = _to_float(cf) if cf is not None else None
+
+        # ── ROE: 当期純利益 ÷ 自己資本（年度別） ──
+        if net_income is not None and total_equity is not None and total_equity != 0:
+            roe = net_income / total_equity
+        else:
+            roe = None
+
+        # ── PER: 株価 ÷ Basic EPS（年度別） ──
+        # yfinance の info が返す trailingPE は現在値であり、過去年度の値は提供されない。
+        # そのため、年度末日の株価と Basic EPS からシステム側で計算する。
+        close_price = _get_close_price_at(prices_df, col)
+        if close_price is not None and basic_eps is not None and basic_eps != 0:
+            per = close_price / basic_eps
+        else:
+            per = None
+
+        # ── 発行済株式数: 当期純利益 ÷ Basic EPS（年度別） ──
+        # yfinance の sharesOutstanding は現在値であり、年度ごとに変動する。
+        # 自社株買い・新株発行の影響を反映するため、各年度の財務諸表から逆算する。
+        if net_income is not None and basic_eps is not None and basic_eps != 0:
+            shares_outstanding = net_income / basic_eps
+        else:
+            shares_outstanding = None
+
+        # ── PBR: 株価 × 発行済株式数 ÷ 自己資本（年度別） ──
+        if close_price is not None and shares_outstanding is not None and total_equity is not None and total_equity != 0:
+            pbr = close_price * shares_outstanding / total_equity
+        else:
+            pbr = None
+
+        # ── 配当利回り: 配当総額 ÷ 時価総額（年度別） ──
+        # キャッシュフロー計算書の配当支払額は支出のためマイナス値、abs() で正数化
+        div_paid = None
+        if cashflow is not None and not cashflow.empty:
+            for div_row in ["Cash Dividends Paid", "Common Stock Dividend Paid", "Dividends Paid"]:
+                if div_row in cashflow.index:
+                    div_paid = cashflow.loc[div_row].get(col)
+                    break
+        div_paid = _to_float(div_paid)
+        if div_paid is not None and close_price is not None and shares_outstanding is not None:
+            dividend_yield = abs(div_paid) / (close_price * shares_outstanding)
+        else:
+            dividend_yield = None
+
         records.append({
             "fiscal_year": year,
-            "revenue": float(rev.get(col)) if rev is not None and col in rev else None,
-            "operating_income": float(op_inc.get(col)) if op_inc is not None and col in op_inc else None,
-            "net_income": float(net_inc.get(col)) if net_inc is not None and col in net_inc else None,
-            "total_assets": float(total_assets) if total_assets is not None else None,
-            "total_equity": float(total_equity) if total_equity is not None else None,
-            "cash_flow": float(cf) if cf is not None else None,
-            "per": raw.get("per") if records else None,
-            "pbr": raw.get("pbr") if records else None,
-            "roe": raw.get("roe") if records else None,
-            "dividend_yield": raw.get("dividend_yield") if records else None,
+            "revenue": revenue,
+            "operating_income": operating_income,
+            "net_income": net_income,
+            "total_assets": total_assets,
+            "total_equity": total_equity,
+            "cash_flow": cash_flow,
+            "per": per,
+            "pbr": pbr,
+            "roe": roe,
+            "dividend_yield": dividend_yield,
             "report_date": report_date,
         })
 
@@ -249,7 +372,8 @@ def download_all() -> None:
         if records is None:
             raw = fetch_yfinance_financials(symbol)
             if raw is not None:
-                records = extract_fiscal_year_data(raw)
+                prices_df = _load_prices_df(ticker_id)
+                records = extract_fiscal_year_data(raw, prices_df)
                 shares = raw.get("shares_outstanding")
                 if shares is not None and shares > 0:
                     conn2 = get_connection()

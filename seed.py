@@ -13,7 +13,7 @@ import yfinance as yf
 from db.schema import init_db, get_connection
 from db.tickers import update_ticker_list
 from db.downloader_prices import download_single_price, save_prices
-from db.downloader_financials import fetch_yfinance_financials, extract_fiscal_year_data, save_financials
+from db.downloader_financials import fetch_yfinance_financials, extract_fiscal_year_data, save_financials, _load_prices_df
 
 # すぐにバックテストを試すための厳選 10 銘柄
 DEMO_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "KO"]
@@ -89,7 +89,8 @@ def seed():
         print(f"[{symbol}] Downloading financials...")
         raw = fetch_yfinance_financials(symbol)
         if raw is not None:
-            records = extract_fiscal_year_data(raw)
+            prices_df = _load_prices_df(ticker_id)
+            records = extract_fiscal_year_data(raw, prices_df)
             if records:
                 save_financials(ticker_id, records)
                 print(f"  -> {len(records)} fiscal years saved")
