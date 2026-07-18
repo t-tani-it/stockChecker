@@ -20,6 +20,7 @@ from db.downloader_financials import (
     fetch_yfinance_financials,
     extract_fiscal_year_data,
     save_financials,
+    _load_prices_df,
 )
 from db.downloader_sentiment import download_next_batch
 from rules.pead import PeadRule
@@ -75,7 +76,8 @@ def download_financials_all(tickers):
         try:
             raw = fetch_yfinance_financials(symbol)
             if raw is not None:
-                records = extract_fiscal_year_data(raw)
+                prices_df = _load_prices_df(ticker_id)
+                records = extract_fiscal_year_data(raw, prices_df)
                 if records:
                     save_financials(ticker_id, records)
                 shares = raw.get("shares_outstanding")
