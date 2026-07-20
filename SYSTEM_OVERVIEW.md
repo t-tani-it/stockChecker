@@ -57,44 +57,135 @@ streamlit run app.py
 
 ### 全データのダウンロード（任意）
 
-seed.py は10銘柄のみを対象としています。**S&P 500 全503銘柄**を対象とする場合は以下のスクリプトを実行します。
+seed.py は10銘柄のみを対象としています。**全銘柄（US 503 + 日本 3,716）**を対象とする場合は以下のスクリプトを実行します。
+
+`download_full.py` は market 引数とデータ種別フラグでダウンロード範囲を柔軟に指定できます。
 
 ```bash
-# 全データを一括ダウンロード（株価・財務）
+# 全market × 全データ種別（株価 + 財務 + PEAD + センチメント）
 python download_full.py
 
-# センチメントのみ追加実行（50銘柄ずつ、複数回に分けて実行）
-python download_full.py --sentiment
+# US株のみ × 全データ種別
+python download_full.py us
 
-# PEAD（決算サプライズ）のみ事前計算
+# 日本株のみ × 株価 + 財務
+python download_full.py japan --price --financials
+
+# 日本株の株価のみ
+python download_full.py japan --price
+
+# PEAD のみ（デフォルト market=all）
 python download_full.py --pead
+
+# センチメントのみ（US株）
+python download_full.py us --sentiment
+
+# インクリメンタル（差分更新）: 株価のみ
+python download_full.py --incremental
+
+# US株の株価を差分更新
+python download_full.py us --inc
+
+# 全marketの財務データを差分更新
+python download_full.py --incremental --financials
+
+# US株の株価＋センチメントを差分更新
+python download_full.py us --inc --price --sentiment
+```
+
+| market | 対象 |
+|--------|------|
+| `all`（デフォルト） | US株 + 日本株 |
+| `us` | US株のみ |
+| `japan` | 日本株のみ |
+
+| フラグ | データ種別 |
+|--------|-----------|
+| `--price` | 株価（yfinance、10年分） |
+| `--financials` | 財務データ（yfinance／EDINET） |
+| `--pead` | PEAD（決算サプライズ） |
+| `--sentiment` | センチメント（ニュース感情分析） |
+| `--incremental` / `--inc` | 差分更新モード（各データ種別の未取得分のみ処理） |
+| （未指定） | 全て |
+
+#### 日本株の初回ダウンロード手順
+
+```bash
+# 1. 銘柄リスト更新（自動）
+python download_full.py japan --price
+
+# 2. 株価完了後、財務データ
+python download_full.py japan --financials
+
+# 3. PEAD 事前計算
+python download_full.py japan --pead
+
+# 4. センチメント（複数回に分けて実行）
+python download_full.py japan --sentiment
 ```
 
 #### センチメントのダウンロード
 
-センチメント分析（ニュース感情分析）は [NewsAPI](https://newsapi.org/register) の無料枠（1日100リクエスト）の制限があるため、全503銘柄を複数回に分けて取得する必要があります。1回の実行で最大50銘柄を処理し、前回のダウンロードから24時間経過していない銘柄は自動スキップされます。
+センチメント分析（ニュース感情分析）は [NewsAPI](https://newsapi.org/register) の無料枠（1日100リクエスト）の制限があるため、全銘柄を複数回に分けて取得する必要があります。1回の実行で最大50銘柄を処理し、前回のダウンロードから24時間経過していない銘柄は自動スキップされます。
 
 ```bash
 # 1回目: 50銘柄を処理（本日）
-python download_full.py --sentiment
+python download_full.py us --sentiment
 
 # 翌日以降、同じコマンドを繰り返し実行
-python download_full.py --sentiment   # 2回目
-python download_full.py --sentiment   # 3回目
-# ... 全503銘柄完了するまで繰り返し
+python download_full.py us --sentiment   # 2回目
+python download_full.py us --sentiment   # 3回目
+# ... 全銘柄完了するまで繰り返し
 ```
 
 進捗は `sentiment_download_log` テーブルで管理され、中断しても次回は続きから自動再開します。
 
 #### PEAD（決算サプライズ）の事前計算
 
-PEADルール（決算発表後ドリフト）は yfinance API から各銘柄の決算サプライズ率を取得します。初回は503銘柄分のAPI呼び出しが発生するため、以下のコマンドで事前計算しておくことを推奨します。
+PEADルール（決算発表後ドリフト）は yfinance API から各銘柄の決算サプライズ率を取得します。初回は対象銘柄数分のAPI呼び出しが発生するため、以下のコマンドで事前計算しておくことを推奨します。
 
 ```bash
+# 全銘柄の PEAD を一括計算
 python download_full.py --pead
+
+# US株のみ
+python download_full.py us --pead
+
+# 日本株のみ
+python download_full.py japan --pead
 ```
 
-1回の実行で `indicators` テーブルに保存され、以降のバックテストでは DB から読み込むため高速に動作します（バックテスト全体が約33秒で完了）。再計算したい場合は再度同じコマンドを実行してください。
+1回の実行で `indicators` テーブルに保存され、以降のバックテストでは DB から読み込むため高速に動作します。再計算したい場合は再度同じコマンドを実行してください。
+
+#### インクリメンタル（差分更新）モード
+
+`--incremental`（短縮: `--inc`）フラグを指定すると、各データ種別の「未取得分のみ」を処理します。
+
+```bash
+# 株価の差分更新（最終取得日より後のデータのみ取得）
+python download_full.py --incremental
+
+# 財務データの差分更新（最新会計年度が未取得の銘柄のみ）
+python download_full.py --incremental --financials
+
+# PEADの差分更新（今年度のPEADが未計算の銘柄のみ）
+python download_full.py --incremental --pead
+
+# センチメントの差分更新（次回DL時刻を過ぎた銘柄のみ）
+python download_full.py --incremental --sentiment
+```
+
+**動作仕様:**
+
+| データ種別 | 差分更新の条件 |
+|-----------|---------------|
+| price | 最終取得日が当日より古い銘柄を再取得（5日バッファ付き） |
+| financials | financials テーブルの最新 fiscal_year が前年度未満の銘柄のみ |
+| pead | indicators テーブルに今年度の PEAD スコアがない銘柄のみ |
+| sentiment | sentiment_download_log の next_download_at を超過した銘柄のみ（従来挙動） |
+
+`--incremental` 単独（種別未指定）の場合は株価の差分更新のみ実行します。
+複数種別を同時に指定することも可能です（例: `--inc --price --pead`）。
 
 ## システム構成
 
@@ -103,8 +194,7 @@ stockChecker/
 ├── app.py                     # Streamlit メインエントリポイント
 ├── config.py                  # 設定（環境変数読み込み）
 ├── seed.py                    # 初期データ投入スクリプト（10銘柄）
-├── download_all.py            # 全データ一括ダウンロードスクリプト（旧・10銘柄デモ用）
-├── download_full.py            # S&P 500 全銘柄一括ダウンロードスクリプト（503銘柄）
+├── download_full.py            # 全銘柄（US + 日本）一括ダウンロードスクリプト
 ├── requirements.txt           # 依存パッケージ一覧
 ├── backtest.db                # SQLite データベース
 │

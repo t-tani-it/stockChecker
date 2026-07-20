@@ -52,30 +52,34 @@ streamlit run app.py
 ## 3. 操作手順
 
 ### 3.1 初回セットアップ
-```python
-# 1. 銘柄リストを更新
-python -c "from db.tickers import update_ticker_list; update_ticker_list()"
+```bash
+# 全market × 全データ種別（株価 + 財務 + PEAD + センチメント）
+python download_full.py
+```
 
-# 2. 株価データをDL（初回は全銘柄）※時間がかかる
-python -c "from db.downloader_prices import download_all; download_all()"
+`download_full.py` は market 引数とデータ種別フラグで範囲を柔軟に指定できます。
 
-# 3. 財務データをDL（初回は4年分）
-python -c "from db.downloader_financials import download_all; download_all()"
+```bash
+# US株のみ × 全データ種別
+python download_full.py us
 
-# 4. センチメントデータをDL（順次）
-python -c "from db.downloader_sentiment import download_next_batch; download_next_batch(n=50)"
+# 日本株のみ × 株価 + 財務
+python download_full.py japan --price --financials
+
+# センチメントのみ（US株）
+python download_full.py us --sentiment
 ```
 
 ### 3.2 定期更新
-```python
+```bash
 # 株価差分更新（前回DL以降のみ）
-python -c "from db.downloader_prices import update_incremental; update_incremental()"
+python download_full.py --incremental
 
-# 財務データ蓄積更新（新しい年度のみ追加）
-python -c "from db.downloader_financials import update_accumulate; update_accumulate()"
+# US株の株価＋センチメントを差分更新
+python download_full.py us --inc --price --sentiment
 
-# センチメント続きをDL（未DL銘柄から順に）
-python -c "from db.downloader_sentiment import download_next_batch; download_next_batch(n=50)"
+# 財務データ差分更新（最新会計年度が未取得の銘柄のみ）
+python download_full.py --incremental --financials
 ```
 
 ### 3.3 バックテスト実行

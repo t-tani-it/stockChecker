@@ -300,7 +300,7 @@ mindmap
         sentiment_download_log
         error_log
       db/tickers.py
-        download_jpx_list: Prime_Standard_Growth
+        download_jpx_list: JPX Excel -> Prime_Standard_Growth
         fetch_sp500_from_wikipedia
         CURATED_US_TICKERS: 50銘柄
       db/downloader_prices.py

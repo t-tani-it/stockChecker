@@ -29,8 +29,7 @@ FINBERT_MODEL_NAME = os.getenv("FINBERT_MODEL_NAME", "ProsusAI/finbert")
 PRICE_LOOKBACK_YEARS = int(os.getenv("PRICE_LOOKBACK_YEARS", "10"))
 FINANCIAL_LOOKBACK_YEARS = int(os.getenv("FINANCIAL_LOOKBACK_YEARS", "4"))
 
-JPX_TICKER_URLS = {
-    "prime": "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/listed_co_j.csv",
-    "standard": "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/listed_co_s.csv",
-    "growth": "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/listed_co_g.csv",
-}
+# JPXが提供する上場銘柄一覧Excel（.xls形式）。毎月第3営業日に更新される。
+# 旧CSV（listed_co_j.csv等）は2025年頃に廃止されたため、Excel読み取りに移行。
+# 読み取りには xlrd ライブラリが必要（pip install xlrd）。
+JPX_TICKER_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"

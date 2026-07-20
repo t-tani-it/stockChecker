@@ -147,25 +147,31 @@ def fetch_news_finnhub(symbol: str) -> list[str]:
         return []
 
 
-def get_next_batch_tickers(n: int, market: str = None) -> list[dict]:
+def get_next_batch_tickers(n: int, market: str = None, incremental: bool = True) -> list[dict]:
     conn = get_connection()
     cursor = conn.cursor()
     query = """
         SELECT t.id, t.symbol, t.name
         FROM tickers t
-        LEFT JOIN sentiment_download_log l ON t.id = l.ticker_id
-        WHERE t.is_active = 1
     """
     params = []
+    if incremental:
+        query += """
+            LEFT JOIN sentiment_download_log l ON t.id = l.ticker_id
+        """
+    query += """
+        WHERE t.is_active = 1
+    """
     if market:
         query += " AND t.market = ?"
         params.append(market)
-    query += """
-        AND (l.last_downloaded_at IS NULL
-             OR datetime(l.next_download_at) <= datetime('now'))
-        ORDER BY l.last_downloaded_at ASC NULLS FIRST
-        LIMIT ?
-    """
+    if incremental:
+        query += """
+            AND (l.last_downloaded_at IS NULL
+                 OR datetime(l.next_download_at) <= datetime('now'))
+            ORDER BY l.last_downloaded_at ASC NULLS FIRST
+        """
+    query += " LIMIT ?"
     params.append(n)
     cursor.execute(query, params)
     rows = [dict(r) for r in cursor.fetchall()]
@@ -231,7 +237,7 @@ def save_sentiment_score(ticker_id: int, articles: list[str], scores: list[dict]
     conn.close()
 
 
-def download_next_batch(n: int = None, market: str = None):
+def download_next_batch(n: int = None, market: str = None, incremental: bool = True):
     """未処理銘柄のセンチメントデータをバッチダウンロード・分析・保存する。
 
     NewsAPI（優先）→ Finnhub（フォールバック）の順でニュースを取得し、
@@ -250,7 +256,7 @@ def download_next_batch(n: int = None, market: str = None):
     if n is None:
         n = SENTIMENT_BATCH_SIZE
 
-    batch = get_next_batch_tickers(n, market=market)
+    batch = get_next_batch_tickers(n, market=market, incremental=incremental)
     if not batch:
         print("No tickers pending sentiment download.")
         return

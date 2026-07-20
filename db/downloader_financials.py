@@ -402,6 +402,79 @@ def update_accumulate() -> None:
     download_all()
 
 
+def update_incremental(market: str = None) -> None:
+    """最新会計年度の財務データが未取得の銘柄のみ差分更新する。
+
+    全銘柄を走査し、financials テーブルに保存されている最新 fiscal_year が
+    前年度（今年-1）未満の場合のみ yfinance から再取得する。
+
+    Args:
+        market: 市場フィルタ（"us" / "japan" / None=全市場）。
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT t.id, t.symbol, t.market, MAX(f.fiscal_year) as latest_fy
+        FROM tickers t
+        LEFT JOIN financials f ON t.id = f.ticker_id
+        WHERE t.is_active = 1
+    """
+    params = []
+    if market:
+        query += " AND t.market = ?"
+        params.append(market)
+    query += " GROUP BY t.id, t.symbol"
+    cursor.execute(query, params)
+    tickers = cursor.fetchall()
+    conn.close()
+
+    current_year = datetime.now().year
+    target_fy = current_year - 1
+
+    total = len(tickers)
+    ok = 0
+    ng = 0
+    for idx, row in enumerate(tickers):
+        ticker_id = row["id"]
+        symbol = row["symbol"]
+        market2 = row["market"]
+        latest_fy = row["latest_fy"]
+
+        if latest_fy is not None and latest_fy >= target_fy:
+            continue
+
+        print(f"[{idx+1}/{total}] Fetching financials (incremental): {symbol}")
+
+        raw = None
+        if market2 == "japan":
+            raw = fetch_edinet_financials(symbol)
+
+        if raw is None:
+            raw = fetch_yfinance_financials(symbol)
+
+        if raw is not None:
+            prices_df = _load_prices_df(ticker_id)
+            records = extract_fiscal_year_data(raw, prices_df)
+            if records:
+                save_financials(ticker_id, records)
+            shares = raw.get("shares_outstanding")
+            if shares is not None and shares > 0:
+                conn2 = get_connection()
+                conn2.execute(
+                    "UPDATE tickers SET shares_outstanding = ?, updated_at = datetime('now') WHERE id = ?",
+                    (shares, ticker_id),
+                )
+                conn2.commit()
+                conn2.close()
+            ok += 1
+        else:
+            log_error("download_financials", ticker_id, f"No financial data for {symbol}")
+            ng += 1
+        time.sleep(0.3 if market2 == "us" else 0.5)
+
+    print(f"Financials incremental done: ok={ok}, ng={ng}")
+
+
 def save_financials(ticker_id: int, records: list) -> None:
     """財務レコードのリストを financials テーブルに保存する。
 

@@ -12,3 +12,4 @@ edinet>=0.4.0
 sec-edgar-api>=0.1.0
 finnhub-python>=2.4.0
 newsapi-python>=0.2.7
+xlrd>=2.0.1

@@ -82,8 +82,11 @@ def download_all() -> None:
 
 
 # COALESCE(MAX(p.date), '1900-01-01') — 価格データが 1 件もない銘柄は '1900-01-01' を初期値とする
-def update_incremental() -> None:
+def update_incremental(market: str = None) -> None:
     """最終取得日以降の株価データを差分更新する。
+
+    Args:
+        market: 市場フィルタ（"us" / "japan" / None=全市場）。
 
     Returns:
         None
@@ -94,13 +97,18 @@ def update_incremental() -> None:
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    query = """
         SELECT t.id, t.symbol, COALESCE(MAX(p.date), '1900-01-01') as last_date
         FROM tickers t
         LEFT JOIN prices p ON t.id = p.ticker_id
         WHERE t.is_active = 1
-        GROUP BY t.id, t.symbol
-    """)
+    """
+    params = []
+    if market:
+        query += " AND t.market = ?"
+        params.append(market)
+    query += " GROUP BY t.id, t.symbol"
+    cursor.execute(query, params)
     tickers = cursor.fetchall()
     conn.close()
 

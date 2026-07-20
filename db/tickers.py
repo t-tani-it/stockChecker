@@ -5,12 +5,11 @@ tickers テーブルを更新する。厳選 US 銘柄の定数リストも保�
 """
 
 import io
-import csv
 import requests
 import pandas as pd
 from typing import List, Tuple, Optional
 
-from config import JPX_TICKER_URLS
+from config import JPX_TICKER_URL
 from db.schema import get_connection
 
 CURATED_US_TICKERS: List[Tuple[str, str]] = [
@@ -38,8 +37,11 @@ CURATED_US_TICKERS: List[Tuple[str, str]] = [
 def download_jpx_list() -> List[Tuple[str, str, str]]:
     """JPX（日本取引所）から上場銘柄一覧をダウンロードする。
 
-    プライム・スタンダード・グロースの各市場別 CSV を取得し、
+    公式Excelファイル（data_j.xls）を pd.read_excel() + xlrd で読み取り、
+    プライム・スタンダード・グロースの内国株式を抽出し、
     （シンボル, 銘柄名, "japan"）のタプルリストとして返す。
+
+    pd.read_excel() は MS Office を必要とせず、Python ライブラリ xlrd のみで動作する。
 
     Returns:
         List[Tuple[str, str, str]]: （symbol, name, market）のタプルリスト。
@@ -48,27 +50,26 @@ def download_jpx_list() -> List[Tuple[str, str, str]]:
     Raises:
         requests.RequestException: HTTP 通信エラー（関数内で捕捉・出力済み）。
     """
-    # io.StringIO(resp.text) はテキストをファイルオブジェクトのように扱う（csv.reader がファイル入力を想定しているため）
-    tickers = []
-    for market, url in JPX_TICKER_URLS.items():
-        try:
-            resp = requests.get(url, timeout=30)
-            resp.encoding = "shift_jis"
-            reader = csv.reader(io.StringIO(resp.text))
-            header_skipped = False
-            for row in reader:
-                if not header_skipped:
-                    header_skipped = True
-                    continue
-                if len(row) < 2:
-                    continue
-                code = row[0].strip()
-                name = row[1].strip()
-                symbol = f"{code}.T"
-                tickers.append((symbol, name, "japan"))
-        except Exception as e:
-            print(f"Failed to download JPX {market}: {e}")
-    return tickers
+    try:
+        resp = requests.get(JPX_TICKER_URL, timeout=30)
+        resp.raise_for_status()
+        # io.BytesIO: ダウンロードしたバイナリをファイルのように扱う（pd.read_excel はファイル or バッファを入力とする）
+        df = pd.read_excel(io.BytesIO(resp.content), engine="xlrd", header=None)
+        # 1行目はヘッダー行なのでスキップ、2行目以降がデータ
+        data = df.iloc[1:]
+        # 3列目（index=3）= 市場・商品区分。'内国株式'（国内株式）を含む行のみ抽出
+        # これにより ETF・REIT・PRO Market・外国株式などが除外される
+        domestic = data[data.iloc[:, 3].str.contains("内国株式", na=False)].copy()
+        tickers = []
+        for _, row in domestic.iterrows():
+            code = str(row.iloc[1]).strip()  # 証券コード（"1301" や "130A" など。文字列のまま保持）
+            name = str(row.iloc[2]).strip()  # 銘柄名
+            symbol = f"{code}.T"
+            tickers.append((symbol, name, "japan"))
+        return tickers
+    except Exception as e:
+        print(f"Failed to download JPX list: {e}")
+        return []
 
 
 def fetch_sp500_from_wikipedia() -> List[Tuple[str, str]]:
@@ -83,17 +84,20 @@ def fetch_sp500_from_wikipedia() -> List[Tuple[str, str]]:
     """
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        # 明示的な User-Agent: Wikipedia は Bot アクセスを制限するため、ブラウザ風のヘッダーを設定
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
         resp = requests.get(url, headers=headers, timeout=30)
         resp.raise_for_status()
+        # pd.read_html(): HTML の <table> 要素を全て DataFrame のリストとしてパース
         tables = pd.read_html(io.StringIO(resp.text))
+        # tables[0]: 最初のテーブル（S&P 500 構成銘柄一覧）を取得
         df = tables[0]
         tickers = []
         for _, row in df.iterrows():
             symbol = row["Symbol"].strip()
             name = row["Security"].strip()
             if "." in symbol:
-                symbol = symbol.replace(".", "-")
+                symbol = symbol.replace(".", "-")  # 例: BRK.B → BRK-B（yfinance の形式に合わせる）
             tickers.append((symbol, name))
         return tickers
     except Exception as e:
@@ -101,8 +105,7 @@ def fetch_sp500_from_wikipedia() -> List[Tuple[str, str]]:
         return []
 
 
-# ON CONFLICT(symbol) DO UPDATE SET — SQLite の UPSERT 構文
-# INSERT で UNIQUE 制約違反が発生した場合は UPDATE にフォールバックする
+# ON CONFLICT(symbol) DO UPDATE SET、excluded.xxxに注意。詳細はコメントアウトで説明している。
 def update_ticker_list() -> None:
     """tickers テーブルを最新の銘柄一覧で更新する。
 
@@ -121,13 +124,14 @@ def update_ticker_list() -> None:
 
     total = 0
 
+    # S&P 500 構成銘柄を tickers に upsert（market='us'）
     sp500 = fetch_sp500_from_wikipedia()
     for symbol, name in sp500:
         cursor.execute("""
             INSERT INTO tickers (symbol, name, market, updated_at)
             VALUES (?, ?, 'us', datetime('now'))
-            ON CONFLICT(symbol) DO UPDATE SET
-                name = excluded.name,
+            ON CONFLICT(symbol) DO UPDATE SET       -- INSERTしてsymbolに衝突(UNIQUE 制約違反)が発生した場合は UPDATE にフォールバックする(SQLite の UPSERT 構文)
+                name = excluded.name,               -- 本来 INSERT しようとした値（excludedは競合時に UPDATE 側で参照するための SQLite の特殊テーブル）
                 market = excluded.market,
                 is_active = 1,
                 updated_at = datetime('now')
@@ -135,6 +139,7 @@ def update_ticker_list() -> None:
     total += len(sp500)
     print(f"US (S&P500) tickers: {len(sp500)}")
 
+    # 厳選 US 銘柄を upsert（S&P 500 と重複する場合は updated_at のみ更新）
     for symbol, name in CURATED_US_TICKERS:
         cursor.execute("""
             INSERT INTO tickers (symbol, name, market, updated_at)
@@ -147,6 +152,7 @@ def update_ticker_list() -> None:
         """, (symbol, name))
     total += len(CURATED_US_TICKERS)
 
+    # JPX 上場銘柄を upsert（market='japan'）
     jp_tickers = download_jpx_list()
     for symbol, name, market in jp_tickers:
         cursor.execute("""
@@ -175,7 +181,9 @@ def get_all_active_tickers() -> List[dict]:
     """
     conn = get_connection()
     cursor = conn.cursor()
+    # is_active = 1: 有効な銘柄のみ（0 = 無効/削除扱い）
     cursor.execute("SELECT id, symbol, name, market FROM tickers WHERE is_active = 1 ORDER BY symbol")
+    # dict(r): sqlite3.Row オブジェクトを通常の辞書に変換（JSON シリアライズなどに便利）
     rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return rows
@@ -193,7 +201,9 @@ def get_ticker_by_symbol(symbol: str) -> Optional[dict]:
     """
     conn = get_connection()
     cursor = conn.cursor()
+    # ? は SQLite のプレースホルダー。Python の変数を安全に埋め込む（SQL インジェクション防止）
     cursor.execute("SELECT id, symbol, name, market FROM tickers WHERE symbol = ?", (symbol,))
     row = cursor.fetchone()
     conn.close()
+    # 該当行があれば辞書に変換、なければ None を返す
     return dict(row) if row else None
